@@ -4,7 +4,7 @@ import socket
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 # Konfiguracja adresu i portu serwera
-server_address = ('192.168.0.89', 5678)
+server_address = ('localhost', 5678)
 
 try:
     # Nawiązywanie połączenia z serwerem
