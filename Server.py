@@ -1,37 +1,64 @@
 import socket
 import threading
 from datetime import datetime
+import sqlite3
 
 # Lista połączonych klientów
 clients = {}
 lock = threading.Lock()
 
+# Funkcja do połączenia z bazą danych SQLite
+def get_db_connection():
+    conn = sqlite3.connect('chat_history.db')
+    return conn
 
-def save_message_to_user_history(user_name, message):
-    """Zapisuje wiadomość do pliku bez dodatkowego znacznika czasu (używamy już sformatowanej wiadomości)."""
-    file_name = f"historia_{user_name}.txt"
-    with open(file_name, "a", encoding="utf-8") as file:
-        file.write(message + "\n")
+# Funkcja do tworzenia tabeli w bazie danych (jeśli jeszcze nie istnieje)
+def create_tables():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender TEXT,
+        receiver TEXT,
+        message TEXT,
+        timestamp TEXT
+    )''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY
+    )''')
+    conn.commit()
+    conn.close()
 
+# Zapisuje wiadomość do bazy danych
+def save_message_to_db(sender, receiver, message):
+    timestamp = get_timestamp()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO messages (sender, receiver, message, timestamp) VALUES (?, ?, ?, ?)",
+                   (sender, receiver, message, timestamp))
+    conn.commit()
+    conn.close()
 
 def get_timestamp():
     """Zwraca aktualny czas w formacie [HH:MM:SS]."""
     return datetime.now().strftime("[%H:%M:%S]")
 
-
+# Funkcja do wysyłania historii wiadomości z bazy danych
 def send_user_chat_history(client_socket, user_name):
-    """Wysyła historię czatu do użytkownika po połączeniu."""
-    file_name = f"historia_{user_name}.txt"
-    try:
-        with open(file_name, "r", encoding="utf-8") as file:
-            history = file.read()
-        if history:
-            client_socket.send(f"\nTwoja historia czatu:\n{history}".encode('utf-8'))
-        else:
-            client_socket.send("\nTwoja historia czatu jest pusta.".encode('utf-8'))
-    except FileNotFoundError:
-        client_socket.send("\nTwoja historia czatu jest pusta.".encode('utf-8'))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT sender, receiver, message, timestamp FROM messages WHERE sender = ? OR receiver = ? ORDER BY timestamp",
+                   (user_name, user_name))
+    history = cursor.fetchall()
+    conn.close()
 
+    if history:
+        history_message = "\nTwoja historia czatu:\n"
+        for row in history:
+            history_message += f"{row[3]} - {row[0]} do {row[1]}: {row[2]}\n"
+        client_socket.send(history_message.encode('utf-8'))
+    else:
+        client_socket.send("\nTwoja historia czatu jest pusta.".encode('utf-8'))
 
 def send_to_client(target_name, message, sender_socket):
     """Wysyła wiadomość prywatną do jednego użytkownika, dodając znacznik czasu."""
@@ -42,15 +69,14 @@ def send_to_client(target_name, message, sender_socket):
         try:
             target_socket.send(timestamped_message.encode('utf-8'))
             # Zapisujemy wiadomość w historii obu użytkowników
-            save_message_to_user_history(clients[sender_socket], f"(Do {target_name}): {message}")
-            save_message_to_user_history(target_name, f"(Od {clients[sender_socket]}): {message}")
+            save_message_to_db(clients[sender_socket], target_name, message)
+            save_message_to_db(target_name, clients[sender_socket], message)
         except:
             target_socket.close()
             with lock:
                 del clients[target_socket]
     else:
         sender_socket.send(f"Użytkownik {target_name} nie został znaleziony.".encode('utf-8'))
-
 
 def list_users(client_socket):
     """Wysyła listę aktualnie podłączonych użytkowników do klienta."""
@@ -60,7 +86,6 @@ def list_users(client_socket):
         client_socket.send(f"Aktualni użytkownicy: {users}".encode('utf-8'))
     else:
         client_socket.send("Brak aktywnych użytkowników.".encode('utf-8'))
-
 
 def send_to_all(sender_socket, message):
     """Wysyła wiadomość do wszystkich użytkowników, dodając znacznik czasu."""
@@ -76,8 +101,7 @@ def send_to_all(sender_socket, message):
                     print(f"Błąd podczas wysyłania do {clients[client_socket]}")
 
     # Zapisujemy broadcast do historii nadawcy
-    save_message_to_user_history(sender_name, f"(Broadcast): {message}")
-
+    save_message_to_db(sender_name, 'all', message)
 
 def handle_client(client_socket, client_address):
     """Obsługuje jednego klienta."""
@@ -90,7 +114,7 @@ def handle_client(client_socket, client_address):
             clients[client_socket] = user_name
 
         client_socket.send(
-            f"Witaj, {user_name}! Możesz teraz wysyłać wiadomości do innych użytkowników.".encode('utf-8'))
+            f"\nWitaj, {user_name}! Możesz teraz wysyłać wiadomości do innych użytkowników.\n".encode('utf-8'))
 
         while True:
             data = client_socket.recv(1024).decode('utf-8')
@@ -130,13 +154,15 @@ def handle_client(client_socket, client_address):
                 del clients[client_socket]
         client_socket.close()
 
-
 # Konfiguracja serwera
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 server_socket.bind(('localhost', 5678))
 server_socket.listen(5)
 print("Serwer nasłuchuje...")
+
+# Tworzenie bazy danych i tabel
+create_tables()
 
 try:
     while True:

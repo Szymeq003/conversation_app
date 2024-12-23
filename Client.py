@@ -15,13 +15,15 @@ def send_messages(client_socket):
     user_name = input()
     client_socket.send(user_name.encode('utf-8'))
 
+    print("\nDostępne komendy:")
+    print("*u - wyświetlenie listy użytkowników")
+    print("/msg <nazwa_użytkownika> <wiadomość> - wysłanie wiadomości prywatnej")
+    print("*** - zakończenie połączenia")
+    print("/all - wysłanie wiadomości do wszystkich użytkowników\n")
+    print("\nWpisz komendę: \n")
+
     while True:
-        print("\nDostępne komendy:")
-        print("*u - wyświetlenie listy użytkowników")
-        print("/msg <nazwa_użytkownika> <wiadomość> - wysłanie wiadomości prywatnej")
-        print("*** - zakończenie połączenia")
-        print("/all - wysłanie wiadomości do wszystkich użytkowników\n")
-        message = input("Wpisz komendę: ")
+        message = input()
 
         if message == "***":
             client_socket.send(message.encode('utf-8'))
